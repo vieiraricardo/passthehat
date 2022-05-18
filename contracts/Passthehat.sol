@@ -1,47 +1,74 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.1;
+/// @title Pass the Hat: Crowdfunding projects made easy with blockchain.
+/// @author Ricardo Vieira
+
+pragma solidity ^0.8.7;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
-contract Passthehat is Ownable {
+contract Passthehat is Initializable, Ownable {
   using SafeMath for uint;
 
   uint32 public constant MAX_FEE = 5000;
   uint32 public FEE = 3000;
-  // add a dev wallet to receive fees and implement to receive fee when the funding owner makes a withdrawal
+  address public adminWallet;
 
-  modifier isFundingReached() {
+  event TimeLimitIncreased(address _fundingAddress, uint32 _newTime);
+  event NewDonate(address _from, address _to, uint _value, uint balance);
+  event NewFunding(
+    uint _id,
+    address _owner,
+    uint _goal,
+    uint minAmount,
+    uint32 _startsIn,
+    uint32 _expiresIn,
+    uint32 _createdAt,
+    bool isFlexibleTimeLimit
+  );
+
+  function initialize(address _adminWallet) public initializer {
+    adminWallet = _adminWallet;
+  }
+
+  struct CrowdfundingRegistration {
+    address owner;
+    uint goal;
+    uint minAmount;
+    uint balance;
+    uint32 startsIn;
+    uint32 expiresIn;
+    uint32 createdAt;
+    bool isActive;
+    bool isFlexibleTimeLimit;
+    bool isTimeLimitIncreased;
+  }
+
+  CrowdfundingRegistration[] public registry;
+
+  mapping(address => uint) crowdFundingId;
+
+  modifier isGoalReached() {
     uint id = crowdFundingId[msg.sender];
 
     CrowdfundingRegistration memory _registry = registry[id];
 
     require(msg.sender == _registry.owner);
 
-    require(_registry.goal < _registry.amountRaised, "Funding not reached.");
+    require(_registry.goal < _registry.balance, "Funding not reached.");
     _;
   }
 
-  event NewFunding(uint _id, address _owner, uint _goal, uint32 _expiresIn, uint32 _createdAt); // atualizar aqui
-  event NewDonate(address _from, address _to, uint _value, uint amountRaised);
+  modifier isOwnerOfFunding() {
+    uint id = crowdFundingId[msg.sender];
 
-  struct CrowdfundingRegistration {
-    address owner;
-    uint goal;
-    uint amountRaised;
-    uint32 expiresIn;
-    uint32 createdAt;
-    // start time
-    // minimum value for donation
-    // create another fiel to know if funding is flexible, case not be flexible check the expiration time and disable funding to receive donations
-    bool isActive;
+    CrowdfundingRegistration memory _registry = registry[id];
+
+    require(msg.sender == _registry.owner);
+    _;
   }
-
-  CrowdfundingRegistration[] public registry;
-
-  mapping(uint => address) crowdFundingOwner;
-  mapping(address => uint) crowdFundingId;
 
   function newRegistry(CrowdfundingRegistration memory _registry) private {
     require(_registry.owner != address(0));
@@ -50,26 +77,89 @@ contract Passthehat is Ownable {
 
     uint id = registry.length - 1;
 
-    crowdFundingOwner[id] = msg.sender;
-
     crowdFundingId[msg.sender] = id;
 
-    emit NewFunding(id, _registry.owner, _registry.goal, _registry.expiresIn, _registry.createdAt);
+    emit NewFunding(
+      id,
+      _registry.owner,
+      _registry.goal,
+      _registry.minAmount,
+      _registry.startsIn,
+      _registry.expiresIn,
+      _registry.createdAt,
+      _registry.isFlexibleTimeLimit
+    );
   }
 
-  // function to inscrease expiration time
+  function createFunding(
+    uint _goal,
+    uint _minAmount,
+    uint32 _startsIn,
+    uint32 _expiresIn,
+    bool _isFlexibleTimeLimit
+  ) public {
+    uint32 createdAt = uint32(block.timestamp);
+    uint32 max_allowed = createdAt + 60 days;
 
-  function createFunding(uint32 _expiresIn, uint _goal) public {
-    newRegistry(
-      CrowdfundingRegistration(
-        msg.sender,
-        _goal,
-        0,
-        uint32(_expiresIn),
-        uint32(block.timestamp),
-        true
-      )
+    if (_startsIn == 0) {
+      newRegistry(
+        CrowdfundingRegistration(
+          msg.sender,
+          _goal,
+          _minAmount,
+          0,
+          createdAt,
+          _expiresIn,
+          createdAt,
+          true,
+          _isFlexibleTimeLimit,
+          false
+        )
+      );
+
+      return;
+    }
+
+    if ((_startsIn > createdAt && _startsIn <= max_allowed)) {
+      newRegistry(
+        CrowdfundingRegistration(
+          msg.sender,
+          _goal,
+          _minAmount,
+          0,
+          _startsIn,
+          _expiresIn,
+          createdAt,
+          true,
+          _isFlexibleTimeLimit,
+          false
+        )
+      );
+    } else {
+      revert("You must pass a start date in epoch time format with a maximum of 60 days from now");
+    }
+  }
+
+  function increaseFundraisingTime(uint32 _days) public isOwnerOfFunding {
+    require(_days >= 0 && _days <= 30, "The number of days need to be less than or equal to 30");
+
+    uint32 extendedTime = _days * 24 * 60 * 60;
+    uint id = crowdFundingId[msg.sender];
+
+    CrowdfundingRegistration storage funding = registry[id];
+
+    require(
+      funding.isTimeLimitIncreased == false,
+      "You cannot increase the time limit more than once"
     );
+
+    require(funding.isFlexibleTimeLimit == false, "This Funding has a flexible time limit.");
+
+    funding.expiresIn = (funding.expiresIn + extendedTime);
+
+    funding.isTimeLimitIncreased = true;
+
+    emit TimeLimitIncreased(msg.sender, funding.expiresIn + extendedTime);
   }
 
   function getFunding(address _fundingAddress)
@@ -94,34 +184,49 @@ contract Passthehat is Ownable {
       "This funding has already reached its goal and no longer accepts donations."
     );
 
-    funding.amountRaised = funding.amountRaised.add(msg.value);
+    require(msg.value >= 0);
 
-    emit NewDonate(msg.sender, _fundingAddress, msg.value, funding.amountRaised);
+    require(
+      msg.value >= funding.minAmount,
+      "This funding has a minimum amount allowed for donations."
+    );
+
+    funding.balance = funding.balance.add(msg.value);
+
+    emit NewDonate(msg.sender, _fundingAddress, msg.value, funding.balance);
   }
 
-  function withdraw() public isFundingReached {
+  function withdraw() public isGoalReached {
     uint id = crowdFundingId[msg.sender];
 
     CrowdfundingRegistration storage funding = registry[id];
 
     require(msg.sender == funding.owner);
 
-    uint withdrawFee = ((FEE / 10000) * funding.amountRaised) / 100;
+    uint withdrawalFee = funding.balance.mul(FEE / 100).div(10000);
 
-    payable(msg.sender).transfer(funding.amountRaised - withdrawFee);
+    payable(msg.sender).transfer(funding.balance.sub(withdrawalFee));
+
+    payable(adminWallet).transfer(withdrawalFee);
 
     funding.isActive = false;
   }
 
+  function balanceOf(address _fundingAddress) public view returns (uint) {
+    uint id = crowdFundingId[_fundingAddress];
+
+    CrowdfundingRegistration storage funding = registry[id];
+
+    if (funding.owner == _fundingAddress) {
+      return funding.balance;
+    } else {
+      return 0;
+    }
+  }
+
   function setFee(uint16 _fee) public onlyOwner {
-    require((_fee * 100) <= MAX_FEE, "Fee greater than the maximum allowed.");
+    require((_fee * 100) <= MAX_FEE, "Fee is greater than the maximum allowed.");
 
     FEE = _fee * 100;
   }
-
-  function getFee() public view returns (uint32) {
-    return FEE;
-  }
 }
-// contrato para manipulação de tokens aceitos como fundos
-// dois tipos de financiamento, Personal fundraising, Projects
