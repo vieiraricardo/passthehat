@@ -74,7 +74,7 @@ describe("Transactions", () => {
       );
 
     await contract.connect(addr2).donate(addr1.address, {
-      value: etherFs.utils.parseEther("3.4"),
+      value: ethers.utils.parseEther("3.4"),
     });
 
     await contract.connect(addr1).withdraw();
