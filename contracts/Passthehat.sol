@@ -3,13 +3,13 @@
 /// @title Pass the Hat: Crowdfunding projects made easy with blockchain.
 /// @author Ricardo Vieira
 
-pragma solidity ^0.8.7;
+pragma solidity ^0.8.2;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "hardhat/console.sol";
 
-contract Passthehat is Initializable, Ownable {
+contract Passthehat is Ownable {
   using SafeMath for uint;
 
   uint32 public constant MAX_FEE = 5000;
@@ -29,10 +29,6 @@ contract Passthehat is Initializable, Ownable {
     bool isFlexibleTimeLimit
   );
 
-  function initialize(address _adminWallet) public initializer {
-    adminWallet = _adminWallet;
-  }
-
   struct CrowdfundingRegistration {
     address owner;
     uint goal;
@@ -46,38 +42,35 @@ contract Passthehat is Initializable, Ownable {
     bool isTimeLimitIncreased;
   }
 
-  CrowdfundingRegistration[] public registry;
+  mapping(address => CrowdfundingRegistration[]) registry;
 
-  mapping(address => uint) crowdFundingId;
+  modifier isGoalReached(uint _fundingId) {
+    CrowdfundingRegistration[] memory fundings = registry[msg.sender];
 
-  modifier isGoalReached() {
-    uint id = crowdFundingId[msg.sender];
+    CrowdfundingRegistration memory funding = fundings[_fundingId];
 
-    CrowdfundingRegistration memory _registry = registry[id];
+    require(msg.sender == funding.owner);
 
-    require(msg.sender == _registry.owner);
-
-    require(_registry.goal < _registry.balance, "Funding not reached.");
+    require(funding.goal < funding.balance, "Funding not reached.");
     _;
   }
 
-  modifier isOwnerOfFunding() {
-    uint id = crowdFundingId[msg.sender];
+  modifier isOwnerOfFunding(uint _fundingId) {
+    CrowdfundingRegistration[] memory fundings = registry[msg.sender];
 
-    CrowdfundingRegistration memory _registry = registry[id];
+    CrowdfundingRegistration memory funding = fundings[_fundingId];
 
-    require(msg.sender == _registry.owner);
+    require(msg.sender == funding.owner);
     _;
   }
 
   function newRegistry(CrowdfundingRegistration memory _registry) private {
     require(_registry.owner != address(0));
 
-    registry.push(_registry);
+    CrowdfundingRegistration[] storage fundings = registry[msg.sender];
+    fundings.push(_registry);
 
-    uint id = registry.length - 1;
-
-    crowdFundingId[msg.sender] = id;
+    uint id = fundings.length - 1;
 
     emit NewFunding(
       id,
@@ -140,13 +133,17 @@ contract Passthehat is Initializable, Ownable {
     }
   }
 
-  function increaseFundraisingTime(uint32 _days) public isOwnerOfFunding {
+  function increaseFundraisingTime(uint32 _days, uint _fundingId)
+    public
+    isOwnerOfFunding(_fundingId)
+  {
     require(_days >= 0 && _days <= 30, "The number of days need to be less than or equal to 30");
 
     uint32 extendedTime = _days * 24 * 60 * 60;
-    uint id = crowdFundingId[msg.sender];
 
-    CrowdfundingRegistration storage funding = registry[id];
+    CrowdfundingRegistration[] storage fundings = registry[msg.sender];
+
+    CrowdfundingRegistration storage funding = fundings[_fundingId];
 
     require(
       funding.isTimeLimitIncreased == false,
@@ -162,22 +159,26 @@ contract Passthehat is Initializable, Ownable {
     emit TimeLimitIncreased(msg.sender, funding.expiresIn + extendedTime);
   }
 
-  function getFunding(address _fundingAddress)
+  function getFunding(address _fundingAddress, uint _fundingId)
     public
     view
     returns (CrowdfundingRegistration memory)
   {
-    uint id = crowdFundingId[_fundingAddress];
+    CrowdfundingRegistration[] memory fundings = registry[_fundingAddress];
 
-    CrowdfundingRegistration memory funding = registry[id];
+    CrowdfundingRegistration memory funding = fundings[_fundingId];
+
+    require(
+      funding.owner == _fundingAddress,
+      "Funding does not exist or is not owned by the address provided"
+    );
 
     return funding;
   }
 
-  function donate(address _fundingAddress) public payable {
-    uint id = crowdFundingId[_fundingAddress];
-
-    CrowdfundingRegistration storage funding = registry[id];
+  function donate(address _fundingAddress, uint _fundingId) public payable {
+    CrowdfundingRegistration[] storage fundings = registry[_fundingAddress];
+    CrowdfundingRegistration storage funding = fundings[_fundingId];
 
     require(
       funding.isActive == true,
@@ -196,26 +197,22 @@ contract Passthehat is Initializable, Ownable {
     emit NewDonate(msg.sender, _fundingAddress, msg.value, funding.balance);
   }
 
-  function withdraw() public isGoalReached {
-    uint id = crowdFundingId[msg.sender];
-
-    CrowdfundingRegistration storage funding = registry[id];
-
-    require(msg.sender == funding.owner);
+  function withdraw(uint _fundingId) public isGoalReached(_fundingId) {
+    CrowdfundingRegistration[] storage fundings = registry[msg.sender];
+    CrowdfundingRegistration storage funding = fundings[_fundingId];
 
     uint withdrawalFee = funding.balance.mul(FEE / 100).div(10000);
 
     payable(msg.sender).transfer(funding.balance.sub(withdrawalFee));
-
     payable(adminWallet).transfer(withdrawalFee);
 
     funding.isActive = false;
   }
 
-  function balanceOf(address _fundingAddress) public view returns (uint) {
-    uint id = crowdFundingId[_fundingAddress];
+  function balanceOf(address _fundingAddress, uint _fundingId) public view returns (uint) {
+    CrowdfundingRegistration[] memory fundings = registry[_fundingAddress];
 
-    CrowdfundingRegistration storage funding = registry[id];
+    CrowdfundingRegistration memory funding = fundings[_fundingId];
 
     if (funding.owner == _fundingAddress) {
       return funding.balance;

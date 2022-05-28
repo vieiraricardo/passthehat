@@ -1,7 +1,6 @@
 const { expect } = require("chai");
 
 describe("Transactions", () => {
-  const provider = waffle.provider;
   let owner, addr1, addr2, contract;
 
   beforeEach(async () => {
@@ -21,7 +20,7 @@ describe("Transactions", () => {
         false
       );
 
-    const { goal } = await contract.connect(addr1).getFunding(owner.address);
+    const { goal } = await contract.connect(addr1).getFunding(addr1.address, 0);
 
     expect(ethers.utils.parseEther("0.0454")).to.be.equal(goal);
   });
@@ -53,11 +52,11 @@ describe("Transactions", () => {
         false
       );
 
-    await contract.connect(addr2).donate(addr1.address, {
+    await contract.connect(addr2).donate(addr1.address, 0, {
       value: ethers.utils.parseEther("0.2"),
     });
 
-    const balance = await contract.connect(addr1).balanceOf(addr1.address);
+    const balance = await contract.connect(addr1).balanceOf(addr1.address, 0);
 
     expect(balance).be.equal(ethers.utils.parseEther("0.2"));
   });
@@ -73,15 +72,15 @@ describe("Transactions", () => {
         false
       );
 
-    await contract.connect(addr2).donate(addr1.address, {
+    await contract.connect(addr2).donate(addr1.address, 0, {
       value: ethers.utils.parseEther("3.4"),
     });
 
-    await contract.connect(addr1).withdraw();
+    await contract.connect(addr1).withdraw(0);
 
     const { isActive } = await contract
       .connect(addr1)
-      .getFunding(owner.address);
+      .getFunding(addr1.address, 0);
 
     expect(isActive).to.be.false;
   });
@@ -97,7 +96,7 @@ describe("Transactions", () => {
         false
       );
 
-    await expect(contract.connect(addr1).withdraw()).to.be.revertedWith(
+    await expect(contract.connect(addr1).withdraw(0)).to.be.revertedWith(
       "Funding not reached."
     );
   });
@@ -113,14 +112,14 @@ describe("Transactions", () => {
         false
       );
 
-    await contract.connect(addr2).donate(addr1.address, {
+    await contract.connect(addr2).donate(addr1.address, 0, {
       value: ethers.utils.parseEther("0.8"),
     });
 
-    await contract.connect(addr1).withdraw();
+    await contract.connect(addr1).withdraw(0);
 
     await expect(
-      contract.connect(addr2).donate(addr1.address, {
+      contract.connect(addr2).donate(addr1.address, 0, {
         value: ethers.utils.parseEther("0.10"),
       })
     ).to.be.revertedWith(
